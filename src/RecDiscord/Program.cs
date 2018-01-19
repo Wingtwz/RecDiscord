@@ -1,84 +1,78 @@
-﻿using System;
+﻿using Discord;
+using Discord.WebSocket;
+using Newtonsoft.Json;
+using System;
 using System.IO;
 using System.Threading.Tasks;
-using Discord;
-using Discord.Commands;
-using Discord.WebSocket;
 
 namespace RecDiscord
 {
     public class Program
     {
+        private DiscordSocketClient client;
+        private CommandHandler commands;
+
+        public static AppSettings Settings;
+
         public static void Main(string[] args)
-            => new Program().MainAsync().GetAwaiter().GetResult();
+                    => new Program().StartAsync().GetAwaiter().GetResult();
 
-        public async Task MainAsync()
+        public async Task StartAsync()
         {
-            var client = new DiscordSocketClient();
-            string token;
+            ReadSettings();
 
-            client.Log += Log;
-
-            client.MessageReceived += MessageReceived;
-
-            using (var stream = new FileStream("token", FileMode.Open))
+            client = new DiscordSocketClient(new DiscordSocketConfig()
             {
-                using (var reader = new StreamReader(stream))
-                {
-                    token = reader.ReadToEnd();
-                }
-            }
+                LogLevel = LogSeverity.Verbose,
+                MessageCacheSize = 1000
+            });
 
-            await client.LoginAsync(TokenType.Bot, token);
+            client.Log += (l) => Console.Out.WriteLineAsync(l.ToString());
+            
+            await client.LoginAsync(TokenType.Bot, Settings.Token);
             await client.StartAsync();
+
+            commands = new CommandHandler();
+            await commands.InstallAsync(client);
 
             await Task.Delay(-1);
         }
 
-        private Task Log(LogMessage msg)
+        public void ReadSettings()
         {
-            Console.WriteLine(msg.ToString());
-            return Task.CompletedTask;
-        }
-
-        private async Task MessageReceived(SocketMessage message)
-        {
-            if (message.Content == "!ping")
+            StreamReader sr = null;
+            try
             {
-                await message.Channel.SendMessageAsync("pong!");
+                sr = new StreamReader("settings.json");
+                var json = sr.ReadToEnd();
+                Settings = JsonConvert.DeserializeObject<AppSettings>(json);
             }
-            else
+            catch (Exception ex) when (ex is IOException || ex is JsonReaderException)
             {
-                var data = message.Content.Split(' ');
-
-                switch (data[0])
-                {
-                    case "!echo":
-                        await message.Channel.SendMessageAsync($"{message.Author.Username} ha dicho: " +
-                            $"{message.Content.Substring(6)}");
-                        break;
-
-                    case "!recon":
-                        await JoinChannel(message);
-                        break;
-                }
-
+                // TODO: Create default settings (w/o token)
+            }
+            finally
+            {
+                if (sr != null)
+                    sr.Close();
             }
         }
 
-        [Command("join")]
-        public async Task JoinChannel(SocketMessage message, IVoiceChannel channel = null)
+        public static void WriteSettings()
         {
-            // Get the audio channel
-            channel = channel ?? (message.Author as IGuildUser)?.VoiceChannel;
-            if (channel == null)
+            StreamWriter sw = null;
+            try
             {
-                await message.Channel.SendMessageAsync("User must be in a voice channel, or a voice channel must be passed as an argument.");
-                return;
+                sw = new StreamWriter("settings.json");
+                var json = JsonConvert.SerializeObject(Settings);
+                sw.Write(json);
             }
-
-            // For the next step with transmitting audio, you would want to pass this Audio Client in to a service.
-            var audioClient = await channel.ConnectAsync();
+            catch (IOException) { }
+            finally
+            {
+                if (sw != null)
+                    sw.Close();
+            }
         }
     }
 }
